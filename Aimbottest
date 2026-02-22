@@ -1,0 +1,411 @@
+-- Modo Treino com Love2D
+-- Interface moderna, círculo ajustável e câmera que gruda na cabeça do personagem
+
+-- Variáveis globais
+local modoTreinoAtivo = false
+local circleRadius = 80  -- raio inicial do círculo
+local circleX, circleY   -- posição do círculo (centro da tela)
+local personagens = {}    -- tabela com os personagens
+local cameraAlvo = nil    -- personagem que a câmera está seguindo
+local windowWidth, windowHeight = love.graphics.getDimensions()
+
+-- Função para criar um novo personagem
+local function criarPersonagem(x, y)
+    return {
+        x = x or love.math.random(100, windowWidth - 100),
+        y = y or love.math.random(100, windowHeight - 100),
+        raio = 25,  -- raio do personagem (cabeça)
+        velX = 0,
+        velY = 0,
+        arrastando = false,
+        cor = { love.math.random(180, 255), love.math.random(140, 220), love.math.random(200, 255) }
+    }
+end
+
+-- Inicialização
+function love.load()
+    -- Configurações de janela
+    love.window.setTitle("Modo Treino - Interface Moderna")
+    love.window.setMode(1000, 700, { resizable = true, minwidth = 800, minheight = 600 })
+    
+    -- Criar 3 personagens em posições diferentes
+    for i = 1, 3 do
+        table.insert(personagens, criarPersonagem(300 + i * 150, 300))
+    end
+    
+    -- Definir posição inicial do círculo
+    circleX, circleY = windowWidth / 2, windowHeight / 2
+    
+    -- Configurações de áudio (opcional, para feedback)
+    -- love.audio.setVolume(0.5)
+end
+
+-- Atualizar dimensões quando a janela for redimensionada
+function love.resize(w, h)
+    windowWidth, windowHeight = w, h
+    -- Manter o círculo centralizado
+    circleX, circleY = w / 2, h / 2
+end
+
+-- Função para desenhar texto com sombra (efeito moderno)
+local function drawTextWithShadow(text, x, y, font, r, g, b, a)
+    -- Sombra
+    love.graphics.setFont(font)
+    love.graphics.setColor(0, 0, 0, 0.3)
+    love.graphics.print(text, x + 2, y + 2)
+    -- Texto principal
+    love.graphics.setColor(r or 1, g or 1, b or 1, a or 1)
+    love.graphics.print(text, x, y)
+end
+
+-- Função para desenhar botão arredondado
+local function drawRoundedButton(text, x, y, w, h, corFundo, corTexto, ativo)
+    -- Sombra do botão
+    love.graphics.setColor(0, 0, 0, 0.25)
+    love.graphics.rectangle("fill", x + 4, y + 4, w, h, 20, 20)
+    
+    -- Fundo do botão com gradiente
+    if ativo then
+        -- Gradiente roxo quando ativo
+        for i = 0, h do
+            local grad = i / h
+            love.graphics.setColor(corFundo[1] * (0.7 + 0.3 * grad), 
+                                  corFundo[2] * (0.7 + 0.3 * grad), 
+                                  corFundo[3] * (0.7 + 0.3 * grad), 1)
+            love.graphics.line(x, y + i, x + w, y + i)
+        end
+    else
+        -- Gradiente azul quando inativo
+        love.graphics.setColor(corFundo)
+        love.graphics.rectangle("fill", x, y, w, h, 20, 20)
+    end
+    
+    -- Borda sutil
+    love.graphics.setColor(1, 1, 1, 0.15)
+    love.graphics.setLineWidth(1)
+    love.graphics.rectangle("line", x, y, w, h, 20, 20)
+    
+    -- Texto do botão
+    local font = love.graphics.getFont()
+    local textW = font:getWidth(text)
+    local textH = font:getHeight()
+    drawTextWithShadow(text, x + (w - textW)/2, y + (h - textH)/2, font, corTexto[1], corTexto[2], corTexto[3])
+end
+
+-- Função para desenhar o slider de tamanho
+local function drawSlider(x, y, w)
+    -- Fundo do slider
+    love.graphics.setColor(0.1, 0.12, 0.18, 0.9)
+    love.graphics.rectangle("fill", x, y, w, 8, 4, 4)
+    
+    -- Barra de progresso (gradiente)
+    local progress = (circleRadius - 30) / (200 - 30)  -- min 30, max 200
+    for i = 0, w * progress do
+        local grad = i / w
+        love.graphics.setColor(0.45 + 0.3 * grad, 0.35 + 0.3 * grad, 0.9, 1)
+        love.graphics.rectangle("fill", x + i - 1, y, 2, 8, 2, 2)
+    end
+    
+    -- Borda
+    love.graphics.setColor(1, 1, 1, 0.2)
+    love.graphics.setLineWidth(1)
+    love.graphics.rectangle("line", x, y, w, 8, 4, 4)
+    
+    -- "Polegar" do slider
+    local thumbX = x + (w - 16) * progress
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.circle("fill", thumbX + 8, y + 4, 10)
+    love.graphics.setColor(0.6, 0.7, 1, 1)
+    love.graphics.setLineWidth(2)
+    love.graphics.circle("line", thumbX + 8, y + 4, 10)
+    
+    -- Valor atual
+    drawTextWithShadow(tostring(math.floor(circleRadius)) .. "px", x + w + 15, y - 8, 
+                       love.graphics.getFont(), 0.9, 0.9, 1)
+end
+
+-- Verificar se um ponto está dentro do círculo
+function isPointInCircle(px, py, cx, cy, raio)
+    local dx = px - cx
+    local dy = py - cy
+    return (dx * dx + dy * dy) <= (raio * raio)
+end
+
+-- Atualizar a lógica de seguimento da câmera
+function updateCameraTarget()
+    if not modoTreinoAtivo then
+        cameraAlvo = nil
+        return
+    end
+    
+    -- Verificar se o alvo atual ainda está dentro do círculo
+    if cameraAlvo then
+        local dentro = isPointInCircle(cameraAlvo.x, cameraAlvo.y - cameraAlvo.raio/2,  -- cabeça um pouco acima
+                                       circleX, circleY, circleRadius)
+        if not dentro then
+            cameraAlvo = nil
+        else
+            return  -- continua seguindo o mesmo
+        end
+    end
+    
+    -- Procurar novo alvo dentro do círculo (prioridade para quem está mais próximo do centro)
+    local melhorDistancia = circleRadius * circleRadius
+    for _, p in ipairs(personagens) do
+        local cabecaX, cabecaY = p.x, p.y - p.raio/2  -- posição da cabeça
+        local dentro = isPointInCircle(cabecaX, cabecaY, circleX, circleY, circleRadius)
+        
+        if dentro then
+            local dx = cabecaX - circleX
+            local dy = cabecaY - circleY
+            local dist2 = dx*dx + dy*dy
+            if dist2 < melhorDistancia then
+                melhorDistancia = dist2
+                cameraAlvo = p
+            end
+        end
+    end
+end
+
+-- Atualização a cada frame
+function love.update(dt)
+    -- Atualizar dimensões (caso tenha mudado)
+    windowWidth, windowHeight = love.graphics.getDimensions()
+    
+    -- Manter círculo centralizado
+    circleX, circleY = windowWidth / 2, windowHeight / 2
+    
+    -- Atualizar posição dos personagens (inércia quando não estão sendo arrastados)
+    for _, p in ipairs(personagens) do
+        if not p.arrastando then
+            -- Pequeno movimento aleatório suave (opcional, para dar vida)
+            p.velX = p.velX * 0.95 + (love.math.random() - 0.5) * 20 * dt
+            p.velY = p.velY * 0.95 + (love.math.random() - 0.5) * 20 * dt
+            p.x = p.x + p.velX * dt
+            p.y = p.y + p.velY * dt
+            
+            -- Manter dentro da tela (com margem)
+            p.x = math.max(40, math.min(windowWidth - 40, p.x))
+            p.y = math.max(40, math.min(windowHeight - 40, p.y))
+        end
+    end
+    
+    -- Atualizar alvo da câmera
+    updateCameraTarget()
+end
+
+-- Desenho principal
+function love.draw()
+    -- Fundo gradiente (tema escuro moderno)
+    for i = 0, windowHeight do
+        local grad = i / windowHeight
+        love.graphics.setColor(0.05 + 0.1 * grad, 0.08 + 0.1 * grad, 0.15 + 0.15 * grad, 1)
+        love.graphics.line(0, i, windowWidth, i)
+    end
+    
+    -- Área do círculo (com efeito de brilho)
+    if modoTreinoAtivo then
+        -- Brilho externo
+        love.graphics.setColor(0.6, 0.4, 1, 0.15)
+        love.graphics.circle("fill", circleX, circleY, circleRadius + 8, 64)
+        
+        -- Círculo principal com gradiente radial (simulado com círculos concêntricos)
+        for r = circleRadius, 2, -2 do
+            local alpha = 0.15 * (r / circleRadius)
+            love.graphics.setColor(0.7, 0.5, 1, alpha)
+            love.graphics.circle("fill", circleX, circleY, r, 64)
+        end
+        
+        -- Borda do círculo
+        love.graphics.setColor(0.8, 0.6, 1, 0.9)
+        love.graphics.setLineWidth(2)
+        love.graphics.circle("line", circleX, circleY, circleRadius, 64)
+        
+        -- Pequenos pontos decorativos
+        love.graphics.setColor(1, 1, 1, 0.4)
+        for i = 1, 8 do
+            local angle = love.math.random() * math.pi * 2
+            local dist = circleRadius + 5
+            local dx = math.cos(angle) * dist
+            local dy = math.sin(angle) * dist
+            love.graphics.circle("fill", circleX + dx, circleY + dy, 2)
+        end
+    else
+        -- Círculo semi-transparente quando inativo
+        love.graphics.setColor(0.5, 0.5, 0.8, 0.2)
+        love.graphics.circle("fill", circleX, circleY, circleRadius, 64)
+        love.graphics.setColor(0.6, 0.6, 0.9, 0.5)
+        love.graphics.setLineWidth(1)
+        love.graphics.circle("line", circleX, circleY, circleRadius, 64)
+    end
+    
+    -- Desenhar personagens
+    for i, p in ipairs(personagens) do
+        -- Corpo (círculo)
+        local isTarget = (cameraAlvo == p)
+        
+        -- Brilho se for o alvo da câmera
+        if isTarget then
+            love.graphics.setColor(1, 0.9, 0.2, 0.3)
+            love.graphics.circle("fill", p.x, p.y - 5, p.raio + 8, 32)
+        end
+        
+        -- Cabeça
+        love.graphics.setColor(p.cor)
+        love.graphics.circle("fill", p.x, p.y - p.raio/2, p.raio, 32)
+        
+        -- Olhos
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.circle("fill", p.x - 8, p.y - p.raio/2 - 3, 4)
+        love.graphics.circle("fill", p.x + 8, p.y - p.raio/2 - 3, 4)
+        love.graphics.setColor(0, 0, 0)
+        love.graphics.circle("fill", p.x - 8, p.y - p.raio/2 - 3, 2)
+        love.graphics.circle("fill", p.x + 8, p.y - p.raio/2 - 3, 2)
+        
+        -- Borda indicadora se for o alvo
+        if isTarget then
+            love.graphics.setColor(1, 0.9, 0.2, 1)
+            love.graphics.setLineWidth(3)
+            love.graphics.circle("line", p.x, p.y - p.raio/2, p.raio + 2, 32)
+        end
+        
+        -- Sorriso (opcional)
+        love.graphics.setColor(0.8, 0.4, 0.4)
+        love.graphics.arc("line", "open", p.x, p.y - p.raio/2 + 8, 10, 0.2, 0.8)
+    end
+    
+    -- Interface (painel inferior)
+    local panelY = windowHeight - 90
+    local panelHeight = 80
+    local panelWidth = windowWidth - 40
+    
+    -- Fundo do painel com blur simulado (retângulo semitransparente)
+    love.graphics.setColor(0.12, 0.15, 0.22, 0.85)
+    love.graphics.rectangle("fill", 20, panelY, panelWidth, panelHeight, 20, 20)
+    
+    -- Borda sutil
+    love.graphics.setColor(0.4, 0.5, 0.8, 0.3)
+    love.graphics.setLineWidth(1)
+    love.graphics.rectangle("line", 20, panelY, panelWidth, panelHeight, 20, 20)
+    
+    -- Botão Modo Treino
+    local btnX, btnY = 40, panelY + 15
+    local btnW, btnH = 220, 50
+    local mouseX, mouseY = love.mouse.getPosition()
+    local mouseOverBtn = mouseX >= btnX and mouseX <= btnX + btnW and 
+                        mouseY >= btnY and mouseY <= btnY + btnH
+    
+    -- Cor do botão (muda com hover)
+    local btnColor
+    if modoTreinoAtivo then
+        btnColor = mouseOverBtn and {0.55, 0.35, 0.9} or {0.45, 0.25, 0.8}
+    else
+        btnColor = mouseOverBtn and {0.25, 0.45, 0.8} or {0.2, 0.35, 0.7}
+    end
+    
+    drawRoundedButton(modoTreinoAtivo and "DESATIVAR MODO TREINO" or "ATIVAR MODO TREINO", 
+                      btnX, btnY, btnW, btnH, btnColor, {1, 1, 1}, modoTreinoAtivo)
+    
+    -- Slider de tamanho
+    local sliderX, sliderY = btnX + btnW + 40, panelY + 30
+    local sliderW = 300
+    drawSlider(sliderX, sliderY, sliderW)
+    
+    -- Texto de instrução
+    love.graphics.setFont(love.graphics.newFont(14))
+    drawTextWithShadow("Arraste os personagens com o mouse", 40, panelY - 25, 
+                       love.graphics.getFont(), 0.8, 0.8, 1, 0.9)
+    
+    -- Status
+    if cameraAlvo then
+        drawTextWithShadow("✔ CÂMERA GRUDADA", windowWidth - 220, panelY - 25, 
+                           love.graphics.getFont(), 0.4, 1, 0.4, 1)
+    elseif modoTreinoAtivo then
+        drawTextWithShadow("⭕ AGUARDANDO ALVO", windowWidth - 220, panelY - 25, 
+                           love.graphics.getFont(), 1, 0.8, 0.4, 1)
+    end
+end
+
+-- Interação com o mouse
+function love.mousepressed(x, y, button)
+    if button == 1 then  -- botão esquerdo
+        -- Verificar clique no botão
+        local btnX, btnY = 40, windowHeight - 75
+        local btnW, btnH = 220, 50
+        if x >= btnX and x <= btnX + btnW and y >= btnY and y <= btnY + btnH then
+            modoTreinoAtivo = not modoTreinoAtivo
+            if not modoTreinoAtivo then
+                cameraAlvo = nil
+            end
+            return
+        end
+        
+        -- Verificar clique nos personagens (para arrastar)
+        for _, p in ipairs(personagens) do
+            local dx = x - p.x
+            local dy = y - (p.y - p.raio/2)  -- clique na cabeça
+            if dx*dx + dy*dy <= p.raio * p.raio then
+                p.arrastando = true
+                p.offsetX = x - p.x
+                p.offsetY = y - p.y
+                break
+            end
+        end
+    end
+end
+
+function love.mousereleased(x, y, button)
+    if button == 1 then
+        for _, p in ipairs(personagens) do
+            p.arrastando = false
+        end
+    end
+end
+
+function love.mousemoved(x, y, dx, dy)
+    -- Arrastar personagens
+    for _, p in ipairs(personagens) do
+        if p.arrastando then
+            p.x = x - p.offsetX
+            p.y = y - p.offsetY
+            
+            -- Limitar à tela
+            p.x = math.max(30, math.min(windowWidth - 30, p.x))
+            p.y = math.max(30, math.min(windowHeight - 30, p.y))
+            
+            -- Atualizar alvo em tempo real
+            if modoTreinoAtivo then
+                updateCameraTarget()
+            end
+            break
+        end
+    end
+    
+    -- Ajustar slider (se o mouse estiver sobre ele e botão pressionado)
+    if love.mouse.isDown(1) then
+        local sliderX, sliderY = 260 + 40, windowHeight - 60
+        local sliderW = 300
+        local mouseX, mouseY = love.mouse.getPosition()
+        
+        if mouseY >= sliderY - 15 and mouseY <= sliderY + 15 then
+            if mouseX >= sliderX and mouseX <= sliderX + sliderW then
+                -- Calcular novo raio baseado na posição do mouse
+                local t = (mouseX - sliderX) / sliderW
+                circleRadius = 30 + t * (200 - 30)  -- min 30, max 200
+                circleRadius = math.floor(circleRadius)
+                
+                -- Atualizar alvo (o círculo mudou de tamanho)
+                if modoTreinoAtivo then
+                    updateCameraTarget()
+                end
+            end
+        end
+    end
+end
+
+-- Permitir fechar com ESC
+function love.keypressed(key)
+    if key == "escape" then
+        love.event.quit()
+    end
+end
