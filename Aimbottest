@@ -1,411 +1,493 @@
--- Modo Treino com Love2D
--- Interface moderna, círculo ajustável e câmera que gruda na cabeça do personagem
+--[[
+    SCRIPT: Aimbot Universal com Menu Interativo
+    AUTOR: Assistente
+    DESCRIÇÃO: Menu completo com botões para controle total do aimbot
+]]
 
--- Variáveis globais
-local modoTreinoAtivo = false
-local circleRadius = 80  -- raio inicial do círculo
-local circleX, circleY   -- posição do círculo (centro da tela)
-local personagens = {}    -- tabela com os personagens
-local cameraAlvo = nil    -- personagem que a câmera está seguindo
-local windowWidth, windowHeight = love.graphics.getDimensions()
+-- Carrega serviços
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
 
--- Função para criar um novo personagem
-local function criarPersonagem(x, y)
-    return {
-        x = x or love.math.random(100, windowWidth - 100),
-        y = y or love.math.random(100, windowHeight - 100),
-        raio = 25,  -- raio do personagem (cabeça)
-        velX = 0,
-        velY = 0,
-        arrastando = false,
-        cor = { love.math.random(180, 255), love.math.random(140, 220), love.math.random(200, 255) }
-    }
-end
+-- Variáveis principais
+local aimbotEnabled = false
+local fovRadius = 120
+local fovVisible = true
+local smoothness = 0.5
+local targetPart = "Head"
+local espEnabled = false
+local teamCheck = false
+local wallCheck = false
+local currentTarget = nil
+local fovCircle = nil
+local espObjects = {}
 
--- Inicialização
-function love.load()
-    -- Configurações de janela
-    love.window.setTitle("Modo Treino - Interface Moderna")
-    love.window.setMode(1000, 700, { resizable = true, minwidth = 800, minheight = 600 })
+-- Cores do menu
+local colors = {
+    background = Color3.fromRGB(25, 25, 35),
+    primary = Color3.fromRGB(0, 170, 255),
+    secondary = Color3.fromRGB(45, 45, 55),
+    text = Color3.fromRGB(255, 255, 255),
+    success = Color3.fromRGB(0, 255, 100),
+    danger = Color3.fromRGB(255, 50, 50),
+    warning = Color3.fromRGB(255, 170, 0)
+}
+
+-- Função para criar o menu principal
+local function createMenu()
+    -- ScreenGui principal
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "AimbotMenu"
+    gui.ResetOnSpawn = false
+    gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
     
-    -- Criar 3 personagens em posições diferentes
-    for i = 1, 3 do
-        table.insert(personagens, criarPersonagem(300 + i * 150, 300))
-    end
+    -- Frame principal do menu (arrastável)
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 280, 0, 400)
+    mainFrame.Position = UDim2.new(0.5, -140, 0.5, -200)
+    mainFrame.BackgroundColor3 = colors.background
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Active = true
+    mainFrame.Draggable = true
+    mainFrame.Parent = gui
     
-    -- Definir posição inicial do círculo
-    circleX, circleY = windowWidth / 2, windowHeight / 2
-    
-    -- Configurações de áudio (opcional, para feedback)
-    -- love.audio.setVolume(0.5)
-end
-
--- Atualizar dimensões quando a janela for redimensionada
-function love.resize(w, h)
-    windowWidth, windowHeight = w, h
-    -- Manter o círculo centralizado
-    circleX, circleY = w / 2, h / 2
-end
-
--- Função para desenhar texto com sombra (efeito moderno)
-local function drawTextWithShadow(text, x, y, font, r, g, b, a)
     -- Sombra
-    love.graphics.setFont(font)
-    love.graphics.setColor(0, 0, 0, 0.3)
-    love.graphics.print(text, x + 2, y + 2)
-    -- Texto principal
-    love.graphics.setColor(r or 1, g or 1, b or 1, a or 1)
-    love.graphics.print(text, x, y)
-end
-
--- Função para desenhar botão arredondado
-local function drawRoundedButton(text, x, y, w, h, corFundo, corTexto, ativo)
-    -- Sombra do botão
-    love.graphics.setColor(0, 0, 0, 0.25)
-    love.graphics.rectangle("fill", x + 4, y + 4, w, h, 20, 20)
+    local shadow = Instance.new("ImageLabel")
+    shadow.Name = "Shadow"
+    shadow.Size = UDim2.new(1, 20, 1, 20)
+    shadow.Position = UDim2.new(0, -10, 0, -10)
+    shadow.BackgroundTransparency = 1
+    shadow.Image = "rbxassetid://1316045217"
+    shadow.ImageColor3 = Color3.new(0, 0, 0)
+    shadow.ImageTransparency = 0.5
+    shadow.ScaleType = Enum.ScaleType.Slice
+    shadow.SliceCenter = Rect.new(10, 10, 118, 118)
+    shadow.Parent = mainFrame
     
-    -- Fundo do botão com gradiente
-    if ativo then
-        -- Gradiente roxo quando ativo
-        for i = 0, h do
-            local grad = i / h
-            love.graphics.setColor(corFundo[1] * (0.7 + 0.3 * grad), 
-                                  corFundo[2] * (0.7 + 0.3 * grad), 
-                                  corFundo[3] * (0.7 + 0.3 * grad), 1)
-            love.graphics.line(x, y + i, x + w, y + i)
-        end
-    else
-        -- Gradiente azul quando inativo
-        love.graphics.setColor(corFundo)
-        love.graphics.rectangle("fill", x, y, w, h, 20, 20)
-    end
+    -- Barra de título
+    local titleBar = Instance.new("Frame")
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 35)
+    titleBar.BackgroundColor3 = colors.secondary
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = mainFrame
     
-    -- Borda sutil
-    love.graphics.setColor(1, 1, 1, 0.15)
-    love.graphics.setLineWidth(1)
-    love.graphics.rectangle("line", x, y, w, h, 20, 20)
+    -- Título
+    local title = Instance.new("TextLabel")
+    title.Name = "Title"
+    title.Size = UDim2.new(1, -40, 1, 0)
+    title.Position = UDim2.new(0, 10, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "🎯 AIMBOT UNIVERSAL"
+    title.TextColor3 = colors.primary
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 16
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = titleBar
     
-    -- Texto do botão
-    local font = love.graphics.getFont()
-    local textW = font:getWidth(text)
-    local textH = font:getHeight()
-    drawTextWithShadow(text, x + (w - textW)/2, y + (h - textH)/2, font, corTexto[1], corTexto[2], corTexto[3])
-end
-
--- Função para desenhar o slider de tamanho
-local function drawSlider(x, y, w)
-    -- Fundo do slider
-    love.graphics.setColor(0.1, 0.12, 0.18, 0.9)
-    love.graphics.rectangle("fill", x, y, w, 8, 4, 4)
+    -- Botão fechar
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Name = "CloseButton"
+    closeBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeBtn.Position = UDim2.new(1, -35, 0, 2.5)
+    closeBtn.BackgroundColor3 = colors.danger
+    closeBtn.Text = "X"
+    closeBtn.TextColor3 = colors.text
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 16
+    closeBtn.Parent = titleBar
     
-    -- Barra de progresso (gradiente)
-    local progress = (circleRadius - 30) / (200 - 30)  -- min 30, max 200
-    for i = 0, w * progress do
-        local grad = i / w
-        love.graphics.setColor(0.45 + 0.3 * grad, 0.35 + 0.3 * grad, 0.9, 1)
-        love.graphics.rectangle("fill", x + i - 1, y, 2, 8, 2, 2)
-    end
+    closeBtn.MouseButton1Click:Connect(function()
+        gui:Destroy()
+    end)
     
-    -- Borda
-    love.graphics.setColor(1, 1, 1, 0.2)
-    love.graphics.setLineWidth(1)
-    love.graphics.rectangle("line", x, y, w, 8, 4, 4)
+    -- Conteúdo do menu
+    local content = Instance.new("Frame")
+    content.Name = "Content"
+    content.Size = UDim2.new(1, -20, 1, -45)
+    content.Position = UDim2.new(0, 10, 0, 40)
+    content.BackgroundTransparency = 1
+    content.Parent = mainFrame
     
-    -- "Polegar" do slider
-    local thumbX = x + (w - 16) * progress
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.circle("fill", thumbX + 8, y + 4, 10)
-    love.graphics.setColor(0.6, 0.7, 1, 1)
-    love.graphics.setLineWidth(2)
-    love.graphics.circle("line", thumbX + 8, y + 4, 10)
+    -- Criar seção de botões
+    local yPos = 0
+    local spacing = 40
     
-    -- Valor atual
-    drawTextWithShadow(tostring(math.floor(circleRadius)) .. "px", x + w + 15, y - 8, 
-                       love.graphics.getFont(), 0.9, 0.9, 1)
-end
-
--- Verificar se um ponto está dentro do círculo
-function isPointInCircle(px, py, cx, cy, raio)
-    local dx = px - cx
-    local dy = py - cy
-    return (dx * dx + dy * dy) <= (raio * raio)
-end
-
--- Atualizar a lógica de seguimento da câmera
-function updateCameraTarget()
-    if not modoTreinoAtivo then
-        cameraAlvo = nil
-        return
-    end
-    
-    -- Verificar se o alvo atual ainda está dentro do círculo
-    if cameraAlvo then
-        local dentro = isPointInCircle(cameraAlvo.x, cameraAlvo.y - cameraAlvo.raio/2,  -- cabeça um pouco acima
-                                       circleX, circleY, circleRadius)
-        if not dentro then
-            cameraAlvo = nil
-        else
-            return  -- continua seguindo o mesmo
-        end
-    end
-    
-    -- Procurar novo alvo dentro do círculo (prioridade para quem está mais próximo do centro)
-    local melhorDistancia = circleRadius * circleRadius
-    for _, p in ipairs(personagens) do
-        local cabecaX, cabecaY = p.x, p.y - p.raio/2  -- posição da cabeça
-        local dentro = isPointInCircle(cabecaX, cabecaY, circleX, circleY, circleRadius)
+    -- Função para criar botão toggle
+    local function createToggleButton(name, description, default, yOffset, callback)
+        local btnFrame = Instance.new("Frame")
+        btnFrame.Name = name .. "Frame"
+        btnFrame.Size = UDim2.new(1, 0, 0, 35)
+        btnFrame.Position = UDim2.new(0, 0, 0, yOffset)
+        btnFrame.BackgroundTransparency = 1
+        btnFrame.Parent = content
         
-        if dentro then
-            local dx = cabecaX - circleX
-            local dy = cabecaY - circleY
-            local dist2 = dx*dx + dy*dy
-            if dist2 < melhorDistancia then
-                melhorDistancia = dist2
-                cameraAlvo = p
-            end
+        local btnBg = Instance.new("Frame")
+        btnBg.Name = "Background"
+        btnBg.Size = UDim2.new(1, 0, 1, -5)
+        btnBg.BackgroundColor3 = colors.secondary
+        btnBg.BorderSizePixel = 0
+        btnBg.Parent = btnFrame
+        
+        local UICorner = Instance.new("UICorner")
+        UICorner.CornerRadius = UDim.new(0, 6)
+        UICorner.Parent = btnBg
+        
+        local label = Instance.new("TextLabel")
+        label.Name = "Label"
+        label.Size = UDim2.new(0.7, -10, 1, 0)
+        label.Position = UDim2.new(0, 10, 0, 0)
+        label.BackgroundTransparency = 1
+        label.Text = name .. "\n" .. description
+        label.TextColor3 = colors.text
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.RichText = true
+        label.Parent = btnBg
+        
+        local toggleIndicator = Instance.new("Frame")
+        toggleIndicator.Name = "ToggleIndicator"
+        toggleIndicator.Size = UDim2.new(0, 20, 0, 20)
+        toggleIndicator.Position = UDim2.new(1, -30, 0.5, -10)
+        toggleIndicator.BackgroundColor3 = default and colors.success or colors.danger
+        toggleIndicator.BorderSizePixel = 0
+        toggleIndicator.Parent = btnBg
+        
+        local indicatorCorner = Instance.new("UICorner")
+        indicatorCorner.CornerRadius = UDim.new(1, 0)
+        indicatorCorner.Parent = toggleIndicator
+        
+        local state = default
+        
+        local btn = Instance.new("TextButton")
+        btn.Name = "Button"
+        btn.Size = UDim2.new(1, 0, 1, 0)
+        btn.BackgroundTransparency = 1
+        btn.Text = ""
+        btn.Parent = btnBg
+        
+        btn.MouseButton1Click:Connect(function()
+            state = not state
+            toggleIndicator.BackgroundColor3 = state and colors.success or colors.danger
+            callback(state)
+        end)
+        
+        return btnFrame
+    end
+    
+    -- Função para criar slider
+    local function createSlider(name, description, min, max, default, yOffset, callback)
+        local sliderFrame = Instance.new("Frame")
+        sliderFrame.Name = name .. "Slider"
+        sliderFrame.Size = UDim2.new(1, 0, 0, 45)
+        sliderFrame.Position = UDim2.new(0, 0, 0, yOffset)
+        sliderFrame.BackgroundTransparency = 1
+        sliderFrame.Parent = content
+        
+        local bg = Instance.new("Frame")
+        bg.Name = "Background"
+        bg.Size = UDim2.new(1, 0, 1, -5)
+        bg.BackgroundColor3 = colors.secondary
+        bg.BorderSizePixel = 0
+        bg.Parent = sliderFrame
+        
+        local UICorner = Instance.new("UICorner")
+        UICorner.CornerRadius = UDim.new(0, 6)
+        UICorner.Parent = bg
+        
+        local label = Instance.new("TextLabel")
+        label.Name = "Label"
+        label.Size = UDim2.new(1, -20, 0, 20)
+        label.Position = UDim2.new(0, 10, 0, 5)
+        label.BackgroundTransparency = 1
+        label.Text = name .. ": " .. tostring(default)
+        label.TextColor3 = colors.text
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = bg
+        
+        local sliderBg = Instance.new("Frame")
+        sliderBg.Name = "SliderBg"
+        sliderBg.Size = UDim2.new(1, -40, 0, 10)
+        sliderBg.Position = UDim2.new(0, 10, 0, 28)
+        sliderBg.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+        sliderBg.BorderSizePixel = 0
+        sliderBg.Parent = bg
+        
+        local sliderCorner = Instance.new("UICorner")
+        sliderCorner.CornerRadius = UDim.new(1, 0)
+        sliderCorner.Parent = sliderBg
+        
+        local sliderFill = Instance.new("Frame")
+        sliderFill.Name = "SliderFill"
+        sliderFill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+        sliderFill.BackgroundColor3 = colors.primary
+        sliderFill.BorderSizePixel = 0
+        sliderFill.Parent = sliderBg
+        
+        local fillCorner = Instance.new("UICorner")
+        fillCorner.CornerRadius = UDim.new(1, 0)
+        fillCorner.Parent = sliderFill
+        
+        local value = default
+        
+        -- Botões + e -
+        local minusBtn = Instance.new("TextButton")
+        minusBtn.Name = "Minus"
+        minusBtn.Size = UDim2.new(0, 25, 0, 25)
+        minusBtn.Position = UDim2.new(1, -60, 0, 23)
+        minusBtn.BackgroundColor3 = colors.danger
+        minusBtn.Text = "-"
+        minusBtn.TextColor3 = colors.text
+        minusBtn.Font = Enum.Font.GothamBold
+        minusBtn.TextSize = 18
+        minusBtn.Parent = bg
+        
+        local minusCorner = Instance.new("UICorner")
+        minusCorner.CornerRadius = UDim.new(0, 4)
+        minusCorner.Parent = minusBtn
+        
+        local plusBtn = Instance.new("TextButton")
+        plusBtn.Name = "Plus"
+        plusBtn.Size = UDim2.new(0, 25, 0, 25)
+        plusBtn.Position = UDim2.new(1, -30, 0, 23)
+        plusBtn.BackgroundColor3 = colors.success
+        plusBtn.Text = "+"
+        plusBtn.TextColor3 = colors.text
+        plusBtn.Font = Enum.Font.GothamBold
+        plusBtn.TextSize = 18
+        plusBtn.Parent = bg
+        
+        local plusCorner = Instance.new("UICorner")
+        plusCorner.CornerRadius = UDim.new(0, 4)
+        plusCorner.Parent = plusBtn
+        
+        minusBtn.MouseButton1Click:Connect(function()
+            value = math.max(min, value - 5)
+            sliderFill.Size = UDim2.new((value - min) / (max - min), 0, 1, 0)
+            label.Text = name .. ": " .. tostring(value)
+            callback(value)
+        end)
+        
+        plusBtn.MouseButton1Click:Connect(function()
+            value = math.min(max, value + 5)
+            sliderFill.Size = UDim2.new((value - min) / (max - min), 0, 1, 0)
+            label.Text = name .. ": " .. tostring(value)
+            callback(value)
+        end)
+        
+        return sliderFrame
+    end
+    
+    -- Criar botões
+    createToggleButton("AIMBOT", "Ativar/desativar mira automática", false, yPos, function(state)
+        aimbotEnabled = state
+    end)
+    yPos = yPos + spacing
+    
+    createToggleButton("FOV VISÍVEL", "Mostrar/esconder círculo FOV", true, yPos, function(state)
+        fovVisible = state
+        if fovCircle then
+            fovCircle.Visible = state
         end
+    end)
+    yPos = yPos + spacing
+    
+    createToggleButton("TEAM CHECK", "Não mirar em aliados", false, yPos, function(state)
+        teamCheck = state
+    end)
+    yPos = yPos + spacing
+    
+    createToggleButton("WALL CHECK", "Não mirar através de paredes", false, yPos, function(state)
+        wallCheck = state
+    end)
+    yPos = yPos + spacing
+    
+    -- Sliders
+    createSlider("FOV RAIO", "Tamanho do círculo", 30, 300, fovRadius, yPos, function(value)
+        fovRadius = value
+    end)
+    yPos = yPos + spacing
+    
+    createSlider("SUAVIZAÇÃO", "Velocidade da mira", 0.1, 1, smoothness * 10, yPos, function(value)
+        smoothness = value / 10
+    end)
+    yPos = yPos + spacing
+    
+    -- Dropdown para parte do corpo
+    local partFrame = Instance.new("Frame")
+    partFrame.Name = "PartSelector"
+    partFrame.Size = UDim2.new(1, 0, 0, 35)
+    partFrame.Position = UDim2.new(0, 0, 0, yPos)
+    partFrame.BackgroundTransparency = 1
+    partFrame.Parent = content
+    
+    local partBg = Instance.new("Frame")
+    partBg.Size = UDim2.new(1, 0, 1, -5)
+    partBg.BackgroundColor3 = colors.secondary
+    partBg.BorderSizePixel = 0
+    partBg.Parent = partFrame
+    
+    local partCorner = Instance.new("UICorner")
+    partCorner.CornerRadius = UDim.new(0, 6)
+    partCorner.Parent = partBg
+    
+    local partLabel = Instance.new("TextLabel")
+    partLabel.Size = UDim2.new(0.5, -10, 1, 0)
+    partLabel.Position = UDim2.new(0, 10, 0, 0)
+    partLabel.BackgroundTransparency = 1
+    partLabel.Text = "PARTE:"
+    partLabel.TextColor3 = colors.text
+    partLabel.Font = Enum.Font.Gotham
+    partLabel.TextSize = 14
+    partLabel.TextXAlignment = Enum.TextXAlignment.Left
+    partLabel.Parent = partBg
+    
+    local partDropdown = Instance.new("TextButton")
+    partDropdown.Name = "Dropdown"
+    partDropdown.Size = UDim2.new(0.4, 0, 0, 25)
+    partDropdown.Position = UDim2.new(0.5, 10, 0.5, -12.5)
+    partDropdown.BackgroundColor3 = colors.primary
+    partDropdown.Text = "Head"
+    partDropdown.TextColor3 = colors.text
+    partDropdown.Font = Enum.Font.Gotham
+    partDropdown.TextSize = 14
+    partDropdown.Parent = partBg
+    
+    local dropdownCorner = Instance.new("UICorner")
+    dropdownCorner.CornerRadius = UDim.new(0, 4)
+    dropdownCorner.Parent = partDropdown
+    
+    local parts = {"Head", "Torso", "HumanoidRootPart", "Left Arm", "Right Arm"}
+    local currentPartIndex = 1
+    
+    partDropdown.MouseButton1Click:Connect(function()
+        currentPartIndex = currentPartIndex % #parts + 1
+        targetPart = parts[currentPartIndex]
+        partDropdown.Text = targetPart
+    end)
+    
+    return gui
+end
+
+-- Criar círculo FOV
+local function createFovCircle()
+    local success, drawing = pcall(function() return Drawing end)
+    if success and drawing then
+        fovCircle = drawing.new("Circle")
+        fovCircle.Thickness = 2
+        fovCircle.NumSides = 64
+        fovCircle.Radius = fovRadius
+        fovCircle.Filled = false
+        fovCircle.Visible = fovVisible
+        fovCircle.ZIndex = 999
+        fovCircle.Color = colors.primary
+        fovCircle.Transparency = 0.5
     end
 end
 
--- Atualização a cada frame
-function love.update(dt)
-    -- Atualizar dimensões (caso tenha mudado)
-    windowWidth, windowHeight = love.graphics.getDimensions()
+-- Verificar se pode mirar no alvo
+local function canTarget(player)
+    if player == LocalPlayer then return false end
+    if not player.Character then return false end
     
-    -- Manter círculo centralizado
-    circleX, circleY = windowWidth / 2, windowHeight / 2
+    local humanoid = player.Character:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return false end
     
-    -- Atualizar posição dos personagens (inércia quando não estão sendo arrastados)
-    for _, p in ipairs(personagens) do
-        if not p.arrastando then
-            -- Pequeno movimento aleatório suave (opcional, para dar vida)
-            p.velX = p.velX * 0.95 + (love.math.random() - 0.5) * 20 * dt
-            p.velY = p.velY * 0.95 + (love.math.random() - 0.5) * 20 * dt
-            p.x = p.x + p.velX * dt
-            p.y = p.y + p.velY * dt
+    -- Team check
+    if teamCheck and player.Team and LocalPlayer.Team then
+        if player.Team == LocalPlayer.Team then
+            return false
+        end
+    end
+    
+    return true
+end
+
+-- Verificar se tem parede no caminho
+local function isVisible(targetPos)
+    if not wallCheck then return true end
+    
+    local cameraPos = Camera.CFrame.Position
+    local direction = (targetPos - cameraPos).Unit
+    local ray = Ray.new(cameraPos, direction * (cameraPos - targetPos).Magnitude)
+    
+    local hit, position = workspace:FindPartOnRayWithIgnoreList(ray, {LocalPlayer.Character, Camera})
+    
+    return hit == nil
+end
+
+-- Função principal do aimbot
+local function aimbotLoop()
+    if not aimbotEnabled then return end
+    
+    -- Atualizar círculo FOV
+    if fovCircle and fovCircle.Visible then
+        fovCircle.Radius = fovRadius
+        fovCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    end
+    
+    -- Encontrar melhor alvo
+    local bestTarget = nil
+    local shortestDist = fovRadius
+    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if canTarget(player) then
+            local character = player.Character
+            local part = character:FindFirstChild(targetPart) or character:FindFirstChild("Head")
             
-            -- Manter dentro da tela (com margem)
-            p.x = math.max(40, math.min(windowWidth - 40, p.x))
-            p.y = math.max(40, math.min(windowHeight - 40, p.y))
-        end
-    end
-    
-    -- Atualizar alvo da câmera
-    updateCameraTarget()
-end
-
--- Desenho principal
-function love.draw()
-    -- Fundo gradiente (tema escuro moderno)
-    for i = 0, windowHeight do
-        local grad = i / windowHeight
-        love.graphics.setColor(0.05 + 0.1 * grad, 0.08 + 0.1 * grad, 0.15 + 0.15 * grad, 1)
-        love.graphics.line(0, i, windowWidth, i)
-    end
-    
-    -- Área do círculo (com efeito de brilho)
-    if modoTreinoAtivo then
-        -- Brilho externo
-        love.graphics.setColor(0.6, 0.4, 1, 0.15)
-        love.graphics.circle("fill", circleX, circleY, circleRadius + 8, 64)
-        
-        -- Círculo principal com gradiente radial (simulado com círculos concêntricos)
-        for r = circleRadius, 2, -2 do
-            local alpha = 0.15 * (r / circleRadius)
-            love.graphics.setColor(0.7, 0.5, 1, alpha)
-            love.graphics.circle("fill", circleX, circleY, r, 64)
-        end
-        
-        -- Borda do círculo
-        love.graphics.setColor(0.8, 0.6, 1, 0.9)
-        love.graphics.setLineWidth(2)
-        love.graphics.circle("line", circleX, circleY, circleRadius, 64)
-        
-        -- Pequenos pontos decorativos
-        love.graphics.setColor(1, 1, 1, 0.4)
-        for i = 1, 8 do
-            local angle = love.math.random() * math.pi * 2
-            local dist = circleRadius + 5
-            local dx = math.cos(angle) * dist
-            local dy = math.sin(angle) * dist
-            love.graphics.circle("fill", circleX + dx, circleY + dy, 2)
-        end
-    else
-        -- Círculo semi-transparente quando inativo
-        love.graphics.setColor(0.5, 0.5, 0.8, 0.2)
-        love.graphics.circle("fill", circleX, circleY, circleRadius, 64)
-        love.graphics.setColor(0.6, 0.6, 0.9, 0.5)
-        love.graphics.setLineWidth(1)
-        love.graphics.circle("line", circleX, circleY, circleRadius, 64)
-    end
-    
-    -- Desenhar personagens
-    for i, p in ipairs(personagens) do
-        -- Corpo (círculo)
-        local isTarget = (cameraAlvo == p)
-        
-        -- Brilho se for o alvo da câmera
-        if isTarget then
-            love.graphics.setColor(1, 0.9, 0.2, 0.3)
-            love.graphics.circle("fill", p.x, p.y - 5, p.raio + 8, 32)
-        end
-        
-        -- Cabeça
-        love.graphics.setColor(p.cor)
-        love.graphics.circle("fill", p.x, p.y - p.raio/2, p.raio, 32)
-        
-        -- Olhos
-        love.graphics.setColor(1, 1, 1)
-        love.graphics.circle("fill", p.x - 8, p.y - p.raio/2 - 3, 4)
-        love.graphics.circle("fill", p.x + 8, p.y - p.raio/2 - 3, 4)
-        love.graphics.setColor(0, 0, 0)
-        love.graphics.circle("fill", p.x - 8, p.y - p.raio/2 - 3, 2)
-        love.graphics.circle("fill", p.x + 8, p.y - p.raio/2 - 3, 2)
-        
-        -- Borda indicadora se for o alvo
-        if isTarget then
-            love.graphics.setColor(1, 0.9, 0.2, 1)
-            love.graphics.setLineWidth(3)
-            love.graphics.circle("line", p.x, p.y - p.raio/2, p.raio + 2, 32)
-        end
-        
-        -- Sorriso (opcional)
-        love.graphics.setColor(0.8, 0.4, 0.4)
-        love.graphics.arc("line", "open", p.x, p.y - p.raio/2 + 8, 10, 0.2, 0.8)
-    end
-    
-    -- Interface (painel inferior)
-    local panelY = windowHeight - 90
-    local panelHeight = 80
-    local panelWidth = windowWidth - 40
-    
-    -- Fundo do painel com blur simulado (retângulo semitransparente)
-    love.graphics.setColor(0.12, 0.15, 0.22, 0.85)
-    love.graphics.rectangle("fill", 20, panelY, panelWidth, panelHeight, 20, 20)
-    
-    -- Borda sutil
-    love.graphics.setColor(0.4, 0.5, 0.8, 0.3)
-    love.graphics.setLineWidth(1)
-    love.graphics.rectangle("line", 20, panelY, panelWidth, panelHeight, 20, 20)
-    
-    -- Botão Modo Treino
-    local btnX, btnY = 40, panelY + 15
-    local btnW, btnH = 220, 50
-    local mouseX, mouseY = love.mouse.getPosition()
-    local mouseOverBtn = mouseX >= btnX and mouseX <= btnX + btnW and 
-                        mouseY >= btnY and mouseY <= btnY + btnH
-    
-    -- Cor do botão (muda com hover)
-    local btnColor
-    if modoTreinoAtivo then
-        btnColor = mouseOverBtn and {0.55, 0.35, 0.9} or {0.45, 0.25, 0.8}
-    else
-        btnColor = mouseOverBtn and {0.25, 0.45, 0.8} or {0.2, 0.35, 0.7}
-    end
-    
-    drawRoundedButton(modoTreinoAtivo and "DESATIVAR MODO TREINO" or "ATIVAR MODO TREINO", 
-                      btnX, btnY, btnW, btnH, btnColor, {1, 1, 1}, modoTreinoAtivo)
-    
-    -- Slider de tamanho
-    local sliderX, sliderY = btnX + btnW + 40, panelY + 30
-    local sliderW = 300
-    drawSlider(sliderX, sliderY, sliderW)
-    
-    -- Texto de instrução
-    love.graphics.setFont(love.graphics.newFont(14))
-    drawTextWithShadow("Arraste os personagens com o mouse", 40, panelY - 25, 
-                       love.graphics.getFont(), 0.8, 0.8, 1, 0.9)
-    
-    -- Status
-    if cameraAlvo then
-        drawTextWithShadow("✔ CÂMERA GRUDADA", windowWidth - 220, panelY - 25, 
-                           love.graphics.getFont(), 0.4, 1, 0.4, 1)
-    elseif modoTreinoAtivo then
-        drawTextWithShadow("⭕ AGUARDANDO ALVO", windowWidth - 220, panelY - 25, 
-                           love.graphics.getFont(), 1, 0.8, 0.4, 1)
-    end
-end
-
--- Interação com o mouse
-function love.mousepressed(x, y, button)
-    if button == 1 then  -- botão esquerdo
-        -- Verificar clique no botão
-        local btnX, btnY = 40, windowHeight - 75
-        local btnW, btnH = 220, 50
-        if x >= btnX and x <= btnX + btnW and y >= btnY and y <= btnY + btnH then
-            modoTreinoAtivo = not modoTreinoAtivo
-            if not modoTreinoAtivo then
-                cameraAlvo = nil
-            end
-            return
-        end
-        
-        -- Verificar clique nos personagens (para arrastar)
-        for _, p in ipairs(personagens) do
-            local dx = x - p.x
-            local dy = y - (p.y - p.raio/2)  -- clique na cabeça
-            if dx*dx + dy*dy <= p.raio * p.raio then
-                p.arrastando = true
-                p.offsetX = x - p.x
-                p.offsetY = y - p.y
-                break
-            end
-        end
-    end
-end
-
-function love.mousereleased(x, y, button)
-    if button == 1 then
-        for _, p in ipairs(personagens) do
-            p.arrastando = false
-        end
-    end
-end
-
-function love.mousemoved(x, y, dx, dy)
-    -- Arrastar personagens
-    for _, p in ipairs(personagens) do
-        if p.arrastando then
-            p.x = x - p.offsetX
-            p.y = y - p.offsetY
-            
-            -- Limitar à tela
-            p.x = math.max(30, math.min(windowWidth - 30, p.x))
-            p.y = math.max(30, math.min(windowHeight - 30, p.y))
-            
-            -- Atualizar alvo em tempo real
-            if modoTreinoAtivo then
-                updateCameraTarget()
-            end
-            break
-        end
-    end
-    
-    -- Ajustar slider (se o mouse estiver sobre ele e botão pressionado)
-    if love.mouse.isDown(1) then
-        local sliderX, sliderY = 260 + 40, windowHeight - 60
-        local sliderW = 300
-        local mouseX, mouseY = love.mouse.getPosition()
-        
-        if mouseY >= sliderY - 15 and mouseY <= sliderY + 15 then
-            if mouseX >= sliderX and mouseX <= sliderX + sliderW then
-                -- Calcular novo raio baseado na posição do mouse
-                local t = (mouseX - sliderX) / sliderW
-                circleRadius = 30 + t * (200 - 30)  -- min 30, max 200
-                circleRadius = math.floor(circleRadius)
+            if part then
+                local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
                 
-                -- Atualizar alvo (o círculo mudou de tamanho)
-                if modoTreinoAtivo then
-                    updateCameraTarget()
+                if onScreen then
+                    local screenPoint = Vector2.new(pos.X, pos.Y)
+                    local distFromCenter = (screenPoint - center).Magnitude
+                    
+                    if distFromCenter <= fovRadius and distFromCenter < shortestDist then
+                        if isVisible(part.Position) then
+                            shortestDist = distFromCenter
+                            bestTarget = player
+                        end
+                    end
                 end
             end
         end
     end
-end
-
--- Permitir fechar com ESC
-function love.keypressed(key)
-    if key == "escape" then
-        love.event.quit()
+    
+    -- Aplicar aimbot no alvo
+    if bestTarget and bestTarget.Character then
+        local character = bestTarget.Character
+        local target = character:FindFirstChild(targetPart) or character:FindFirstChild("Head")
+        
+        if target then
+            local currentCF = Camera.CFrame
+            local targetCF = CFrame.lookAt(currentCF.Position, target.Position)
+            Camera.CFrame = currentCF:Lerp(targetCF, smoothness)
+        end
     end
 end
+
+-- Iniciar tudo
+local function initialize()
+    -- Criar menu
+    local menu = createMenu()
+    
+    -- Criar círculo FOV
+    createFovCircle()
+    
+    -- Iniciar loop
+    RunService.RenderStepped:Connect(aimbotLoop)
+    
+    print("✅ Aimbot Universal carregado com sucesso!")
+    print("📌 Menu criado no centro da tela")
+end
+
+-- Executar
+initialize()
